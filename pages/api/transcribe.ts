@@ -9,29 +9,34 @@ export const config = {
 };
 
 export default async function handler(req: any, res: any) {
-  const openai = new OpenAI({
-    apiKey: process.env.SHOPAIKEY_API_KEY,
-    baseURL: process.env.SHOPAIKEY_OPENAI_BASE_URL,
-  });
-
-  const fData = await new Promise<{ fields: any; files: any }>(
-    (resolve, reject) => {
-      const form = new IncomingForm({
-        multiples: false,
-        uploadDir: "/tmp",
-        keepExtensions: true,
-      });
-      form.parse(req, (err, fields, files) => {
-        if (err) return reject(err);
-        resolve({ fields, files });
-      });
-    }
-  );
-
-  const videoFile = fData.files.file;
-  const videoFilePath = videoFile?.filepath;
-
   try {
+    if (!process.env.SHOPAIKEY_API_KEY) {
+      res.status(500).json({ error: "API key chưa được cấu hình trên server." });
+      return;
+    }
+
+    const openai = new OpenAI({
+      apiKey: process.env.SHOPAIKEY_API_KEY,
+      baseURL: process.env.SHOPAIKEY_OPENAI_BASE_URL,
+    });
+
+    const fData = await new Promise<{ fields: any; files: any }>(
+      (resolve, reject) => {
+        const form = new IncomingForm({
+          multiples: false,
+          uploadDir: "/tmp",
+          keepExtensions: true,
+        });
+        form.parse(req, (err, fields, files) => {
+          if (err) return reject(err);
+          resolve({ fields, files });
+        });
+      }
+    );
+
+    const videoFile = fData.files.file;
+    const videoFilePath = videoFile?.filepath;
+
     const resp = await openai.audio.transcriptions.create({
       file: fs.createReadStream(videoFilePath),
       model: "whisper-1",

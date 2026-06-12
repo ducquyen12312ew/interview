@@ -210,7 +210,16 @@ export default function DemoPage() {
           body: formData,
         }
       );
-      const results = await upload.json();
+
+      let results;
+      try {
+        results = await upload.json();
+      } catch {
+        setSubmitting(false);
+        setStatus("Lỗi kết nối server");
+        console.error("Server trả về response không hợp lệ (không phải JSON).");
+        return;
+      }
 
       if (upload.ok) {
         setIsSuccess(true);
@@ -273,7 +282,8 @@ export default function DemoPage() {
           }
         }
       } else {
-        console.error("Upload failed.");
+        console.error("Upload failed.", results);
+        setSubmitting(false);
       }
 
       setTimeout(function () {
@@ -829,7 +839,7 @@ export default function DemoPage() {
                                   className="flex text-sm ml-4 mt-0 flex-col text-right items-center justify-center"
                                 >
                                   <span className=" text-gray-500">
-                                    {question.difficulty === "Easy" ? (
+                                    {question.difficulty === "Dễ" ? (
                                       <svg
                                         className="h-full w-[16px]"
                                         viewBox="0 0 22 25"
@@ -850,6 +860,37 @@ export default function DemoPage() {
                                           height="16"
                                           rx="1"
                                           fill="#E1E1E1"
+                                        />
+                                        <rect
+                                          x="16"
+                                          y="0.130859"
+                                          width="6"
+                                          height="24"
+                                          rx="1"
+                                          fill="#E1E1E1"
+                                        />
+                                      </svg>
+                                    ) : question.difficulty === "Trung Bình" ? (
+                                      <svg
+                                        className="h-full w-[16px]"
+                                        viewBox="0 0 22 25"
+                                        fill="none"
+                                        xmlns="http://www.w3.org/2000/svg"
+                                      >
+                                        <rect
+                                          y="13.1309"
+                                          width="6"
+                                          height="11"
+                                          rx="1"
+                                          fill="#4E7BBA"
+                                        />
+                                        <rect
+                                          x="8"
+                                          y="8.13086"
+                                          width="6"
+                                          height="16"
+                                          rx="1"
+                                          fill="#4E7BBA"
                                         />
                                         <rect
                                           x="16"
@@ -888,7 +929,7 @@ export default function DemoPage() {
                                           width="6"
                                           height="24"
                                           rx="1"
-                                          fill="#E1E1E1"
+                                          fill="#4E7BBA"
                                         />
                                       </svg>
                                     )}
@@ -1680,7 +1721,7 @@ export default function DemoPage() {
                   </ul>
                 )}
                 {step === 1 &&
-                  (selected.name === "Behavioral" ? (
+                  (selected.name === "Hành Vi" ? (
                     <motion.ul
                       initial={{ opacity: 0, y: 10 }}
                       animate={{ opacity: 1, y: 0 }}
@@ -1695,14 +1736,15 @@ export default function DemoPage() {
                             <div className="absolute inset-0 rounded-lg ring-1 ring-inset ring-zinc-900/[7.5%] group-hover:ring-zinc-900/10"></div>
                             <div className="relative flex h-full flex-col overflow-hidden">
                               <div className="flex items-center text-left text-[#1a2b3b]">
-                                <p>Tại sao bạn chọn công ty này?</p>
+                                <p>Giải quyết mâu thuẫn nhóm</p>
                               </div>
                               <p className="text-wrap grow font-normal text-[7px]">
-                                Tại sao bạn muốn làm việc cho Google?
+                                Hãy kể về một lần bạn giải quyết mâu thuẫn
+                                trong nhóm và kết quả ra sao.
                               </p>
                               <div className="flex flex-row space-x-1">
                                 <p className="inline-flex items-center justify-center truncate rounded-full border-[0.5px] border-gray-300 px-[3px] text-[7px] font-normal hover:bg-gray-50">
-                                  Quản lý Sản Phẩm
+                                  Teamwork
                                 </p>
                                 <p className="inline-flex items-center justify-center truncate rounded-full border-[0.5px] border-[#D0E7DC] bg-[#F3FAF1] px-[3px] text-[7px] font-normal hover:bg-[#edf8ea]">
                                   <span className="mr-1 flex items-center text-emerald-600">
@@ -1742,15 +1784,15 @@ export default function DemoPage() {
                             <div className="absolute inset-0 rounded-lg ring-1 ring-inset ring-zinc-900/[7.5%] group-hover:ring-zinc-900/10"></div>
                             <div className="relative flex h-full flex-col overflow-hidden">
                               <div className="flex items-center text-left text-[#1a2b3b]">
-                                <p>What are you most proud of?</p>
+                                <p>Thất bại trong dự án</p>
                               </div>
                               <p className="text-wrap grow font-normal text-[7px]">
-                                Tell me about the thing you are most proud of.
-                                Why is it so important to you?
+                                Bạn đã từng thất bại trong một dự án chưa?
+                                Bạn đã học được gì từ đó?
                               </p>
                               <div className="flex flex-row space-x-1">
                                 <p className="inline-flex items-center justify-center truncate rounded-full border-[0.5px] border-gray-300 px-[3px] text-[7px] font-normal hover:bg-gray-50">
-                                  General
+                                  Ownership
                                 </p>
                                 <p className="inline-flex items-center justify-center truncate rounded-full border-[0.5px] border-[#D0E7DC] bg-[#F3FAF1] px-[3px] text-[7px] font-normal hover:bg-[#edf8ea]">
                                   <span className="mr-1 flex items-center text-emerald-600">
@@ -1790,15 +1832,15 @@ export default function DemoPage() {
                             <div className="absolute inset-0 rounded-lg ring-1 ring-inset ring-zinc-900/[7.5%] group-hover:ring-zinc-900/10"></div>
                             <div className="relative flex h-full flex-col overflow-hidden">
                               <div className="flex items-center text-left text-[#1a2b3b]">
-                                <p>Hãy giới thiệu về bản thân</p>
+                                <p>Làm việc dưới áp lực</p>
                               </div>
                               <p className="text-wrap grow font-normal text-[7px]">
-                                Trình bày hồ sơ, dự án và những điểm bạn thấy
-                                phù hợp với vị trí ứng tuyển.
+                                Một tình huống khiến bạn phải làm việc dưới
+                                áp lực lớn, bạn xử lý thế nào?
                               </p>
                               <div className="flex flex-row space-x-1">
                                 <p className="inline-flex items-center justify-center truncate rounded-full border-[0.5px] border-gray-300 px-[3px] text-[7px] font-normal hover:bg-gray-50">
-                                  Quản lý Sản Phẩm
+                                  Adaptability
                                 </p>
                                 <p className="inline-flex items-center justify-center truncate rounded-full border-[0.5px] border-[#D0E7DC] bg-[#F3FAF1] px-[3px] text-[7px] font-normal hover:bg-[#edf8ea]">
                                   <span className="mr-1 flex items-center text-emerald-600">
@@ -1838,15 +1880,15 @@ export default function DemoPage() {
                             <div className="absolute inset-0 rounded-lg ring-1 ring-inset ring-zinc-900/[7.5%] group-hover:ring-zinc-900/10"></div>
                             <div className="relative flex h-full flex-col overflow-hidden">
                               <div className="flex items-center text-left text-[#1a2b3b]">
-                                <p>Điểm mạnh của bạn là gì?</p>
+                                <p>Thuyết phục đồng đội</p>
                               </div>
                               <p className="text-wrap grow font-normal text-[7px]">
-                                Nêu các điểm mạnh và lý do bạn là ứng viên
-                                phù hợp cho vị trí này.
+                                Bạn đã thuyết phục đồng đội thay đổi ý kiến
+                                như thế nào? Kết quả ra sao?
                               </p>
                               <div className="flex flex-row space-x-1">
                                 <p className="inline-flex items-center justify-center truncate rounded-full border-[0.5px] border-gray-300 px-[3px] text-[7px] font-normal hover:bg-gray-50">
-                                  Kỹ sư Phần Mềm
+                                  Leadership
                                 </p>
                                 <p className="inline-flex items-center justify-center truncate rounded-full border-[0.5px] border-[#D0E7DC] bg-[#F3FAF1] px-[3px] text-[7px] font-normal hover:bg-[#edf8ea]">
                                   <span className="mr-1 flex items-center text-emerald-600">
@@ -1886,15 +1928,15 @@ export default function DemoPage() {
                             <div className="absolute inset-0 rounded-lg ring-1 ring-inset ring-zinc-900/[7.5%] group-hover:ring-zinc-900/10"></div>
                             <div className="relative flex h-full flex-col overflow-hidden">
                               <div className="flex items-center text-left text-[#1a2b3b]">
-                                <p>Điểm yếu của bạn là gì?</p>
+                                <p>Chủ động giải quyết vấn đề</p>
                               </div>
                               <p className="text-wrap grow font-normal text-[7px]">
-                                Nêu điểm yếu của bạn và cách nó ảnh hưởng đến
-                                công việc trước đây của bạn.
+                                Hãy kể về lần bạn chủ động phát hiện và
+                                giải quyết một vấn đề mà không ai yêu cầu.
                               </p>
                               <div className="flex flex-row space-x-1">
                                 <p className="inline-flex items-center justify-center truncate rounded-full border-[0.5px] border-gray-300 px-[3px] text-[7px] font-normal hover:bg-gray-50">
-                                  Quản lý Sản Phẩm
+                                  Ownership
                                 </p>
                                 <p className="inline-flex items-center justify-center truncate rounded-full border-[0.5px] border-[#D0E7DC] bg-[#F3FAF1] px-[3px] text-[7px] font-normal hover:bg-[#edf8ea]">
                                   <span className="mr-1 flex items-center text-emerald-600">
@@ -1944,15 +1986,15 @@ export default function DemoPage() {
                             <div className="absolute inset-0 rounded-lg ring-1 ring-inset ring-zinc-900/[7.5%] group-hover:ring-zinc-900/10"></div>
                             <div className="relative flex h-full flex-col overflow-hidden">
                               <div className="flex items-center text-left text-[#1a2b3b]">
-                                <p>Giải thích hàm này làm gì</p>
+                                <p>Độ phức tạp QuickSort</p>
                               </div>
                               <p className="text-wrap grow font-normal text-[7px]">
-                                Giải thích chi tiết chức năng, độ phức tạp
-                                thời gian và không gian của hàm này...
+                                Độ phức tạp thời gian trung bình và xấu nhất
+                                của QuickSort là gì? Giải thích tại sao.
                               </p>
                               <div className="flex flex-row space-x-1">
                                 <p className="inline-flex items-center justify-center truncate rounded-full border-[0.5px] border-gray-300 px-[3px] text-[7px] font-normal hover:bg-gray-50">
-                                  Software Engineering
+                                  Thuật toán
                                 </p>
                                 <p className="inline-flex items-center justify-center truncate rounded-full border-[0.5px] border-[#D0E7DC] bg-[#F3FAF1] px-[3px] text-[7px] font-normal hover:bg-[#edf8ea]">
                                   <span className="mr-1 flex items-center text-emerald-600">
@@ -1992,15 +2034,15 @@ export default function DemoPage() {
                             <div className="absolute inset-0 rounded-lg ring-1 ring-inset ring-zinc-900/[7.5%] group-hover:ring-zinc-900/10"></div>
                             <div className="relative flex h-full flex-col overflow-hidden">
                               <div className="flex items-center text-left text-[#1a2b3b]">
-                                <p>Mở rộng sản phẩm Uber</p>
+                                <p>Thiết kế chat realtime</p>
                               </div>
                               <p className="text-wrap grow font-normal text-[7px]">
-                                Uber muốn mở rộng dòng sản phẩm và muốn nghe
-                                ý kiến của bạn về cách thực hiện...
+                                Thiết kế hệ thống chat realtime hỗ trợ
+                                hàng triệu người dùng đồng thời.
                               </p>
                               <div className="flex flex-row space-x-1">
                                 <p className="inline-flex items-center justify-center truncate rounded-full border-[0.5px] border-gray-300 px-[3px] text-[7px] font-normal hover:bg-gray-50">
-                                  Quản lý Sản Phẩm
+                                  System Design
                                 </p>
                                 <p className="inline-flex items-center justify-center truncate rounded-full border-[0.5px] border-[#D0E7DC] bg-[#F3FAF1] px-[3px] text-[7px] font-normal hover:bg-[#edf8ea]">
                                   <span className="mr-1 flex items-center text-emerald-600">
@@ -2040,15 +2082,15 @@ export default function DemoPage() {
                             <div className="absolute inset-0 rounded-lg ring-1 ring-inset ring-zinc-900/[7.5%] group-hover:ring-zinc-900/10"></div>
                             <div className="relative flex h-full flex-col overflow-hidden">
                               <div className="flex items-center text-left text-[#1a2b3b]">
-                                <p>Cân một chiếc máy bay</p>
+                                <p>SQL vs NoSQL</p>
                               </div>
                               <p className="text-wrap grow font-normal text-[7px]">
-                                Làm thế nào để cân một chiếc máy bay mà không
-                                có cân?
+                                Giải thích sự khác nhau giữa SQL và NoSQL.
+                                Khi nào nên dùng cái nào?
                               </p>
                               <div className="flex flex-row space-x-1">
                                 <p className="inline-flex items-center justify-center truncate rounded-full border-[0.5px] border-gray-300 px-[3px] text-[7px] font-normal hover:bg-gray-50">
-                                  Câu đố tư duy
+                                  Database
                                 </p>
                                 <p className="inline-flex items-center justify-center truncate rounded-full border-[0.5px] border-[#D0E7DC] bg-[#F3FAF1] px-[3px] text-[7px] font-normal hover:bg-[#edf8ea]">
                                   <span className="mr-1 flex items-center text-emerald-600">
@@ -2088,15 +2130,63 @@ export default function DemoPage() {
                             <div className="absolute inset-0 rounded-lg ring-1 ring-inset ring-zinc-900/[7.5%] group-hover:ring-zinc-900/10"></div>
                             <div className="relative flex h-full flex-col overflow-hidden">
                               <div className="flex items-center text-left text-[#1a2b3b]">
-                                <p>Bạn sẽ xây dựng lại Twitter như thế nào?</p>
+                                <p>Tối ưu API chậm</p>
                               </div>
                               <p className="text-wrap grow font-normal text-[7px]">
-                                Dựa trên hiểu biết của bạn về Twitter, hãy
-                                thiết kế hệ thống từ đầu.
+                                Làm thế nào để tối ưu một API đang bị chậm?
+                                Liệt kê các bước bạn sẽ làm.
                               </p>
                               <div className="flex flex-row space-x-1">
                                 <p className="inline-flex items-center justify-center truncate rounded-full border-[0.5px] border-gray-300 px-[3px] text-[7px] font-normal hover:bg-gray-50">
-                                  Thiết kế Hệ thống
+                                  Performance
+                                </p>
+                                <p className="inline-flex items-center justify-center truncate rounded-full border-[0.5px] border-[#D0E7DC] bg-[#F3FAF1] px-[3px] text-[7px] font-normal hover:bg-[#edf8ea]">
+                                  <span className="mr-1 flex items-center text-emerald-600">
+                                    <svg
+                                      className="h-2 w-2"
+                                      viewBox="0 0 24 24"
+                                      fill="none"
+                                      xmlns="http://www.w3.org/2000/svg"
+                                    >
+                                      <path
+                                        d="M4.75 12C4.75 7.99594 7.99594 4.75 12 4.75C16.0041 4.75 19.25 7.99594 19.25 12C19.25 16.0041 16.0041 19.25 12 19.25C7.99594 19.25 4.75 16.0041 4.75 12Z"
+                                        fill="#459A5F"
+                                        stroke="#459A5F"
+                                        strokeWidth="1.5"
+                                        strokeLinecap="round"
+                                        strokeLinejoin="round"
+                                      ></path>
+                                      <path
+                                        d="M9.75 12.75L10.1837 13.6744C10.5275 14.407 11.5536 14.4492 11.9564 13.7473L14.25 9.75"
+                                        stroke="#F4FAF4"
+                                        strokeWidth="1.5"
+                                        strokeLinecap="round"
+                                        strokeLinejoin="round"
+                                      ></path>
+                                    </svg>
+                                  </span>
+                                  Đã hoàn thành
+                                </p>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </li>
+                      <li className="list-none relative flex items-stretch text-left">
+                        <div className="group relative w-full">
+                          <div className="relative mb-2 flex h-full max-h-[200px] w-full cursor-pointer items-start justify-between rounded-lg p-2 font-medium transition duration-100">
+                            <div className="absolute inset-0 rounded-lg ring-1 ring-inset ring-zinc-900/[7.5%] group-hover:ring-zinc-900/10"></div>
+                            <div className="relative flex h-full flex-col overflow-hidden">
+                              <div className="flex items-center text-left text-[#1a2b3b]">
+                                <p>Debug memory leak React</p>
+                              </div>
+                              <p className="text-wrap grow font-normal text-[7px]">
+                                Cách debug memory leak trong React?
+                                Bạn sẽ dùng công cụ nào và xử lý ra sao?
+                              </p>
+                              <div className="flex flex-row space-x-1">
+                                <p className="inline-flex items-center justify-center truncate rounded-full border-[0.5px] border-gray-300 px-[3px] text-[7px] font-normal hover:bg-gray-50">
+                                  Debugging
                                 </p>
                                 <p className="inline-flex items-center justify-center truncate rounded-full border-[0.5px] border-[#D0E7DC] bg-[#F3FAF1] px-[3px] text-[7px] font-normal hover:bg-[#edf8ea]">
                                   <span className="mr-1 flex items-center text-emerald-600">
