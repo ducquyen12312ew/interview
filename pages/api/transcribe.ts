@@ -44,21 +44,12 @@ export default async function handler(req: any, res: any) {
 
     const transcript = resp?.text;
 
-    const moderationResp = await openai.moderations.create({
-      input: transcript,
-    });
-
-    if (moderationResp?.results[0]?.flagged) {
-      res
-        .status(200)
-        .json({ error: "Inappropriate content detected. Please try again." });
-      return;
-    }
-
     res.status(200).json({ transcript });
     return resp;
   } catch (error) {
-    console.error("server error", error);
-    res.status(500).json({ error: "Error" });
+    console.error("TRANSCRIBE ERROR:", error);
+    return res.status(500).json({
+      error: error instanceof Error ? error.message : String(error),
+    });
   }
 }
