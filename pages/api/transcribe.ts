@@ -44,17 +44,6 @@ export default async function handler(req: any, res: any) {
 
     const transcript = resp?.text;
 
-    const moderationResp = await openai.moderations.create({
-      input: transcript,
-    });
-
-    if (moderationResp?.results[0]?.flagged) {
-      res
-        .status(200)
-        .json({ error: "Inappropriate content detected. Please try again." });
-      return;
-    }
-
     res.status(200).json({ transcript });
     return resp;
   } catch (error) {
