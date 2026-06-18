@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRef, useState, useEffect, useCallback } from "react";
 import Webcam from "react-webcam";
 import { createFFmpeg, fetchFile } from "@ffmpeg/ffmpeg";
+import { log } from "../utils/logger";
 
 const questions = [
   {
@@ -25,22 +26,29 @@ const interviewers = [
   {
     id: "John",
     name: "John",
-    description: "Kỹ sư Phần Mềm",
+    description: "Software Engineer",
     level: "L3",
   },
   {
     id: "Richard",
     name: "Richard",
-    description: "Quản lý Sản Phẩm",
+    description: "Product Manager",
     level: "L5",
   },
   {
     id: "Sarah",
     name: "Sarah",
-    description: "Khác",
+    description: "AI Engineer",
     level: "L7",
   },
 ];
+
+// The single interview question used across the demo.
+const QUESTION_TEXT =
+  "Hãy kể về một lần dự án IT của bạn gặp lỗi nghiêm trọng (bug/sự cố) ngay sát giờ ra mắt (release). Bạn đã xử lý thế nào?";
+// Pre-loaded transcript for the hidden Sarah demo mode.
+const DEMO_TRANSCRIPT =
+  "Dạ... có một lần... hình như là lúc làm bài tập lớn... à không, lúc em làm deploy cái dự án web cuối kỳ ấy ạ. Chỉ còn khoảng... ờ... 2 tiếng nữa là đến giờ demo với thầy thì tự nhiên cái API nó... kiểu... bị crash liên tục, không fetch được dữ liệu từ database lên. Lúc đó em... em hoảng lắm, tại code chạy trên máy em (localhost) ngon lành mà lên server nó lại lỗi. Xong rồi... em mới... à... nhảy vào đọc log của server thì thấy lỗi kết nối. Thì ra là... kiểu... lúc config biến môi trường trên server em bị gõ sai mất một ký tự. Thế là... ờ... em sửa lại rồi deploy lại luôn. May quá... dạ... hệ thống chạy lại bình thường ngay trước giờ demo tầm 15 phút ạ.";
 
 const ffmpeg = createFFmpeg({
   // corePath: `http://localhost:3000/ffmpeg/dist/ffmpeg-core.js`,
@@ -51,6 +59,76 @@ const ffmpeg = createFFmpeg({
 
 function classNames(...classes: string[]) {
   return classes.filter(Boolean).join(" ");
+}
+
+// Renders inline **bold** segments inside a line of feedback text.
+function renderInline(text: string) {
+  return text.split(/(\*\*[^*]+\*\*)/g).map((part, i) =>
+    part.startsWith("**") && part.endsWith("**") ? (
+      <strong key={i} className="font-semibold text-[#1D2B3A]">
+        {part.slice(2, -2)}
+      </strong>
+    ) : (
+      <span key={i}>{part}</span>
+    )
+  );
+}
+
+// Parses the structured Markdown feedback from the AI into styled cards.
+function FeedbackDisplay({ text }: { text: string }) {
+  type Item = { type: "p" | "bullet"; text: string };
+  type Section = { title: string | null; items: Item[] };
+
+  const sections: Section[] = [];
+  let current: Section | null = null;
+
+  text.split("\n").forEach((raw) => {
+    const line = raw.trim();
+    if (line.startsWith("## ")) {
+      current = { title: line.slice(3).trim(), items: [] };
+      sections.push(current);
+      return;
+    }
+    if (line === "") return;
+    if (!current) {
+      current = { title: null, items: [] };
+      sections.push(current);
+    }
+    if (line.startsWith("- ") || line.startsWith("* ")) {
+      current.items.push({ type: "bullet", text: line.slice(2) });
+    } else {
+      current.items.push({ type: "p", text: line.replace(/^#+\s*/, "") });
+    }
+  });
+
+  return (
+    <div className="mt-4 flex flex-col gap-4">
+      {sections.map((section, si) => (
+        <div
+          key={si}
+          className="rounded-lg border border-[#EEEEEE] bg-[#FAFAFA] p-4 leading-6 text-gray-900"
+        >
+          {section.title && (
+            <h3 className="text-[15px] font-semibold text-[#1D2B3A] mb-2">
+              {section.title}
+            </h3>
+          )}
+          {section.items.map((item, ii) =>
+            item.type === "bullet" ? (
+              <div key={ii} className="flex gap-2 text-sm ml-1 mt-1">
+                <span className="text-[#407BBF] shrink-0">•</span>
+                <span>{renderInline(item.text)}</span>
+              </div>
+            ) : (
+              <p key={ii} className="text-sm mt-1">
+                {renderInline(item.text)}
+              </p>
+            )
+          )}
+        </div>
+      ))}
+    </div>
+  );
 }
 
 export default function DemoPage() {
@@ -68,7 +146,6 @@ export default function DemoPage() {
   const [videoEnded, setVideoEnded] = useState(false);
   const [recordingPermission, setRecordingPermission] = useState(true);
   const [cameraLoaded, setCameraLoaded] = useState(false);
-  const vidRef = useRef<HTMLVideoElement>(null);
   const [isSubmitting, setSubmitting] = useState(false);
   const [status, setStatus] = useState("Đang xử lý");
   const [isSuccess, setIsSuccess] = useState(false);
@@ -77,6 +154,93 @@ export default function DemoPage() {
   const [completed, setCompleted] = useState(false);
   const [transcript, setTranscript] = useState("");
   const [generatedFeedback, setGeneratedFeedback] = useState("");
+  const [isSecretMode, setIsSecretMode] = useState(false);
+  const secretAnalysisStarted = useRef(false);
+  const vidRef = useRef<HTMLVideoElement>(null);
+
+  // The interviewer's video clip (with embedded audio).
+  const getVideoSrc = (interviewerId: string): string => {
+    return `/video/${interviewerId}_v1.mp4`;
+  };
+
+  // Single source of truth for the question so the text shown on screen
+  // always matches the text sent to the AI.
+  const getQuestion = () => QUESTION_TEXT;
+
+  // Streams the AI feedback for a given question + answer transcript.
+  const generateFeedback = async (
+    question: string,
+    answer: string,
+    isBehavioral: boolean
+  ) => {
+    const prompt = `Hãy đưa ra nhận xét về câu hỏi phỏng vấn sau: ${question} dựa trên bản ghi lời nói của ứng viên: ${answer}. ${
+      isBehavioral
+        ? "Hãy nhận xét thêm về kỹ năng giao tiếp của ứng viên."
+        : "Hãy nhận xét về kỹ năng diễn đạt của ứng viên và mức độ liên quan đến câu hỏi."
+    }`;
+
+    setGeneratedFeedback("");
+    log.api("/api/generate", { transcriptLength: answer.length });
+    const response = await fetch("/api/generate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt }),
+    });
+
+    if (!response.ok) {
+      log.apiError("/api/generate", { status: response.status });
+      throw new Error(response.statusText);
+    }
+
+    const data = response.body;
+    if (!data) {
+      return;
+    }
+
+    const reader = data.getReader();
+    const decoder = new TextDecoder();
+    let done = false;
+    let accumulated = "";
+
+    while (!done) {
+      const { value, done: doneReading } = await reader.read();
+      done = doneReading;
+      const chunkValue = decoder.decode(value);
+      accumulated += chunkValue;
+      setGeneratedFeedback((prev: any) => prev + chunkValue);
+    }
+
+    log.apiResponse("/api/generate", { feedbackLength: accumulated.length });
+  };
+
+  // Hidden shortcut below Sarah's card: flips into secret mode. The actual
+  // work (pre-fill + auto-analysis) is handled by the effect below.
+  const enterSecretMode = () => {
+    window.location.href = "/secret-demo";
+  };
+
+  // When secret mode activates, pre-fill the Sarah demo and auto-trigger the
+  // AI analysis immediately, then jump straight to the feedback screen.
+  useEffect(() => {
+    if (!isSecretMode || secretAnalysisStarted.current) return;
+    secretAnalysisStarted.current = true;
+
+    setTranscript(DEMO_TRANSCRIPT);
+    setIsSuccess(true);
+    setCompleted(true);
+    log.action("Chuyển bước", { từ: step, sang: 3 });
+    setStep(3);
+
+    generateFeedback(QUESTION_TEXT, DEMO_TRANSCRIPT, true).catch((error) => {
+      log.error("Secret-mode analysis", error);
+      console.error("Secret-mode analysis failed:", error);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isSecretMode]);
+
+  useEffect(() => {
+    log.page("Demo", { step: 1 });
+  }, []);
 
   useEffect(() => {
     setIsDesktop(window.innerWidth >= 768);
@@ -90,6 +254,7 @@ export default function DemoPage() {
         element.style.display = "flex";
       }
 
+      log.action("Bắt đầu ghi âm");
       setCapturing(true);
       setIsVisible(false);
 
@@ -110,6 +275,8 @@ export default function DemoPage() {
       startTimer.style.display = "none";
     }
 
+    // Play the local interviewer video (with its own embedded audio). The
+    // video's onEnded still drives the flow (setVideoEnded).
     if (vidRef.current) {
       vidRef.current.play();
     }
@@ -126,6 +293,7 @@ export default function DemoPage() {
 
   const handleStopCaptureClick = useCallback(() => {
     if (mediaRecorderRef.current) {
+      log.action("Dừng ghi âm", { chunks: recordedChunks.length });
       mediaRecorderRef.current.stop();
     }
     setCapturing(false);
@@ -166,6 +334,7 @@ export default function DemoPage() {
 
       // This writes the file to memory, removes the video, and converts the audio to mp3
       ffmpeg.FS("writeFile", `${unique_id}.webm`, await fetchFile(file));
+      log.ffmpeg("Bắt đầu convert audio sang MP3");
       await ffmpeg.run(
         "-i",
         `${unique_id}.webm`,
@@ -180,6 +349,7 @@ export default function DemoPage() {
         "mp3",
         `${unique_id}.mp3`
       );
+      log.ffmpeg("Convert xong");
 
       // This reads the converted file from the file system
       const fileData = ffmpeg.FS("readFile", `${unique_id}.mp3`);
@@ -192,17 +362,11 @@ export default function DemoPage() {
       formData.append("file", output, `${unique_id}.mp3`);
       formData.append("model", "whisper-1");
 
-      const question =
-        selected.name === "Hành Vi"
-          ? `Hãy giới thiệu về bản thân bạn. Bạn có thể trình bày tóm tắt về hồ sơ của mình không?`
-          : selectedInterviewer.name === "John"
-          ? "Hash Table là gì, và độ phức tạp thời gian trung bình và xấu nhất của từng thao tác là bao nhiêu?"
-          : selectedInterviewer.name === "Richard"
-          ? "Uber đang có kế hoạch mở rộng dòng sản phẩm. Hãy trình bày cách bạn tiếp cận vấn đề này."
-          : "Bạn có một bình 3 gallon và một bình 5 gallon, làm thế nào để đo chính xác 4 gallon?";
+      const question = getQuestion();
 
       setStatus("Đang nhận dạng giọng nói");
 
+      log.api("/api/transcribe", { question: question?.substring(0, 50) });
       const upload = await fetch(
         `/api/transcribe?question=${encodeURIComponent(question)}`,
         {
@@ -214,11 +378,20 @@ export default function DemoPage() {
       let results;
       try {
         results = await upload.json();
-      } catch {
+      } catch (err) {
+        log.error("Transcribe response parse", err);
         setSubmitting(false);
         setStatus("Lỗi kết nối server");
         console.error("Server trả về response không hợp lệ (không phải JSON).");
         return;
+      }
+
+      if (!upload.ok) {
+        log.apiError("/api/transcribe", { status: upload.status });
+      } else {
+        log.apiResponse("/api/transcribe", {
+          transcript: results.transcript?.substring(0, 100),
+        });
       }
 
       if (upload.ok) {
@@ -241,45 +414,11 @@ export default function DemoPage() {
         });
 
         if (results.transcript.length > 0) {
-          const prompt = `Hãy đưa ra nhận xét về câu hỏi phỏng vấn sau: ${question} dựa trên bản ghi lời nói của ứng viên: ${
-            results.transcript
-          }. ${
+          await generateFeedback(
+            question,
+            results.transcript,
             selected.name === "Hành Vi"
-              ? "Hãy nhận xét thêm về kỹ năng giao tiếp của ứng viên. Đảm bảo câu trả lời có cấu trúc rõ ràng (ví dụ theo khung STAR hoặc PAR)."
-              : "Hãy nhận xét về kỹ năng diễn đạt của ứng viên. Đảm bảo câu trả lời mạch lạc, đúng trọng tâm và liên quan đến câu hỏi."
-          } \n\nNhận xét của bạn về câu trả lời của ứng viên:`;
-
-          setGeneratedFeedback("");
-          const response = await fetch("/api/generate", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              prompt,
-            }),
-          });
-
-          if (!response.ok) {
-            throw new Error(response.statusText);
-          }
-
-          // This data is a ReadableStream
-          const data = response.body;
-          if (!data) {
-            return;
-          }
-
-          const reader = data.getReader();
-          const decoder = new TextDecoder();
-          let done = false;
-
-          while (!done) {
-            const { value, done: doneReading } = await reader.read();
-            done = doneReading;
-            const chunkValue = decoder.decode(value);
-            setGeneratedFeedback((prev: any) => prev + chunkValue);
-          }
+          );
         }
       } else {
         console.error("Upload failed.", results);
@@ -318,57 +457,82 @@ export default function DemoPage() {
 
           {completed ? (
             <div className="w-full flex flex-col max-w-[1080px] mx-auto mt-[10vh] overflow-y-auto pb-8 md:pb-12">
-              <motion.div
-                initial={{ y: 20 }}
-                animate={{ y: 0 }}
-                transition={{ duration: 0.35, ease: [0.075, 0.82, 0.165, 1] }}
-                className="relative md:aspect-[16/9] w-full max-w-[1080px] overflow-hidden bg-[#1D2B3A] rounded-lg ring-1 ring-gray-900/5 shadow-md flex flex-col items-center justify-center"
-              >
-                <video
-                  className="w-full h-full rounded-lg"
-                  controls
-                  crossOrigin="anonymous"
-                  autoPlay
+              {isSecretMode ? (
+                <motion.div
+                  initial={{ y: 20 }}
+                  animate={{ y: 0 }}
+                  transition={{ duration: 0.35, ease: [0.075, 0.82, 0.165, 1] }}
+                  className="relative w-full max-w-[1080px] overflow-hidden bg-[#1D2B3A] rounded-lg ring-1 ring-gray-900/5 shadow-md flex flex-col md:flex-row items-center gap-5 p-6"
                 >
-                  <source
-                    src={URL.createObjectURL(
-                      new Blob(recordedChunks, { type: "video/mp4" })
-                    )}
-                    type="video/mp4"
+                  <img
+                    src="/placeholders/Sarah.webp"
+                    alt="Sarah's Interviewer Profile"
+                    className="w-[120px] h-[120px] rounded-lg object-cover ring-1 ring-white/10 shrink-0"
                   />
-                </video>
-              </motion.div>
-              <motion.div
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{
-                  delay: 0.5,
-                  duration: 0.15,
-                  ease: [0.23, 1, 0.82, 1],
-                }}
-                className="flex flex-col md:flex-row items-center mt-2 md:mt-4 md:justify-between space-y-1 md:space-y-0"
-              >
-                <div className="flex flex-row items-center space-x-1">
-                  <svg
-                    xmlns="http://www.w3.org/2000/svg"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    strokeWidth={2}
-                    stroke="currentColor"
-                    className="w-4 h-4 text-[#407BBF] shrink-0"
+                  <div className="flex flex-col text-center md:text-left">
+                    <span className="text-[13px] uppercase tracking-wide text-[#84a9d1] font-medium">
+                      Người phỏng vấn · Sarah
+                    </span>
+                    <h2 className="text-white text-lg md:text-xl font-semibold mt-1">
+                      {getQuestion()}
+                    </h2>
+                  </div>
+                </motion.div>
+              ) : (
+                <>
+                  <motion.div
+                    initial={{ y: 20 }}
+                    animate={{ y: 0 }}
+                    transition={{ duration: 0.35, ease: [0.075, 0.82, 0.165, 1] }}
+                    className="relative md:aspect-[16/9] w-full max-w-[1080px] overflow-hidden bg-[#1D2B3A] rounded-lg ring-1 ring-gray-900/5 shadow-md flex flex-col items-center justify-center"
                   >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z"
-                    />
-                  </svg>
-                  <p className="text-[14px] font-normal leading-[20px] text-[#1a2b3b]">
-                    Video không được lưu trên máy chủ và sẽ bị xóa ngay khi
-                    bạn rời khỏi trang.
-                  </p>
-                </div>
-              </motion.div>
+                    <video
+                      className="w-full h-full rounded-lg"
+                      controls
+                      crossOrigin="anonymous"
+                      autoPlay
+                    >
+                      <source
+                        src={URL.createObjectURL(
+                          new Blob(recordedChunks, { type: "video/mp4" })
+                        )}
+                        type="video/mp4"
+                      />
+                    </video>
+                  </motion.div>
+                  <motion.div
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{
+                      delay: 0.5,
+                      duration: 0.15,
+                      ease: [0.23, 1, 0.82, 1],
+                    }}
+                    className="flex flex-col md:flex-row items-center mt-2 md:mt-4 md:justify-between space-y-1 md:space-y-0"
+                  >
+                    <div className="flex flex-row items-center space-x-1">
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        strokeWidth={2}
+                        stroke="currentColor"
+                        className="w-4 h-4 text-[#407BBF] shrink-0"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z"
+                        />
+                      </svg>
+                      <p className="text-[14px] font-normal leading-[20px] text-[#1a2b3b]">
+                        Video không được lưu trên máy chủ và sẽ bị xóa ngay khi
+                        bạn rời khỏi trang.
+                      </p>
+                    </div>
+                  </motion.div>
+                </>
+              )}
               <motion.div
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
@@ -393,11 +557,33 @@ export default function DemoPage() {
                   <h2 className="text-xl font-semibold text-left text-[#1D2B3A] mb-2">
                     Nhận xét từ AI
                   </h2>
-                  <div className="mt-4 text-sm flex gap-2.5 rounded-lg border border-[#EEEEEE] bg-[#FAFAFA] p-4 leading-6 text-gray-900 min-h-[100px]">
-                    <p className="prose prose-sm max-w-none">
-                      {generatedFeedback}
-                    </p>
-                  </div>
+                  {generatedFeedback ? (
+                    <FeedbackDisplay text={generatedFeedback} />
+                  ) : (
+                    <div className="mt-4 flex items-center gap-2.5 rounded-lg border border-[#EEEEEE] bg-[#FAFAFA] p-4 text-sm text-gray-600 min-h-[100px]">
+                      <svg
+                        className="animate-spin h-4 w-4 text-[#407BBF]"
+                        xmlns="http://www.w3.org/2000/svg"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                      >
+                        <circle
+                          className="opacity-25"
+                          cx="12"
+                          cy="12"
+                          r="10"
+                          stroke="currentColor"
+                          strokeWidth={3}
+                        ></circle>
+                        <path
+                          className="opacity-75"
+                          fill="currentColor"
+                          d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                        ></path>
+                      </svg>
+                      <span>Đang phân tích câu trả lời của bạn...</span>
+                    </div>
+                  )}
                 </div>
               </motion.div>
             </div>
@@ -406,13 +592,7 @@ export default function DemoPage() {
               {recordingPermission ? (
                 <div className="w-full flex flex-col max-w-[1080px] mx-auto justify-center">
                   <h2 className="text-2xl font-semibold text-left text-[#1D2B3A] mb-2">
-                    {selected.name === "Hành Vi"
-                      ? `Hãy giới thiệu về bản thân bạn. Bạn có thể trình bày tóm tắt về hồ sơ của mình không?`
-                      : selectedInterviewer.name === "John"
-                      ? "Hash Table là gì, và độ phức tạp thời gian trung bình và xấu nhất của từng thao tác là bao nhiêu?"
-                      : selectedInterviewer.name === "Richard"
-                      ? "Uber đang có kế hoạch mở rộng dòng sản phẩm. Hãy trình bày cách bạn tiếp cận vấn đề này."
-                      : "Bạn có một bình 3 gallon và một bình 5 gallon, làm thế nào để đo chính xác 4 gallon?"}
+                    {QUESTION_TEXT}
                   </h2>
                   <span className="text-[14px] leading-[20px] text-[#1a2b3b] font-normal mb-4">
                     Câu hỏi thường gặp tại Google, Facebook và nhiều công ty hàng đầu
@@ -461,7 +641,13 @@ export default function DemoPage() {
                           <div className="h-full w-full aspect-video rounded md:rounded-lg lg:rounded-xl">
                             <video
                               id="question-video"
-                              onEnded={() => setVideoEnded(true)}
+                              key={getVideoSrc(selectedInterviewer.id)}
+                              onEnded={() => {
+                                log.action(
+                                  "Video phỏng vấn kết thúc, bắt đầu đếm ngược"
+                                );
+                                setVideoEnded(true);
+                              }}
                               controls={false}
                               ref={vidRef}
                               playsInline
@@ -469,23 +655,7 @@ export default function DemoPage() {
                               crossOrigin="anonymous"
                             >
                               <source
-                                src={
-                                  selectedInterviewer.name === "John"
-                                    ? selected.name === "Behavioral"
-                                      ? "https://liftoff-public.s3.amazonaws.com/DemoInterviewMale.mp4"
-                                      : "https://liftoff-public.s3.amazonaws.com/JohnTechnical.mp4"
-                                    : selectedInterviewer.name === "Richard"
-                                    ? selected.name === "Behavioral"
-                                      ? "https://liftoff-public.s3.amazonaws.com/RichardBehavioral.mp4"
-                                      : "https://liftoff-public.s3.amazonaws.com/RichardTechnical.mp4"
-                                    : selectedInterviewer.name === "Sarah"
-                                    ? selected.name === "Behavioral"
-                                      ? "https://liftoff-public.s3.amazonaws.com/BehavioralSarah.mp4"
-                                      : "https://liftoff-public.s3.amazonaws.com/SarahTechnical.mp4"
-                                    : selected.name === "Behavioral"
-                                    ? "https://liftoff-public.s3.amazonaws.com/DemoInterviewMale.mp4"
-                                    : "https://liftoff-public.s3.amazonaws.com/JohnTechnical.mp4"
-                                }
+                                src={getVideoSrc(selectedInterviewer.id)}
                                 type="video/mp4"
                               />
                             </video>
@@ -699,7 +869,10 @@ export default function DemoPage() {
                   </motion.div>
                   <div className="flex flex-row space-x-4 mt-8 justify-end">
                     <button
-                      onClick={() => setStep(1)}
+                      onClick={() => {
+                        log.action("Chuyển bước", { từ: step, sang: 1 });
+                        setStep(1);
+                      }}
                       className="group max-w-[200px] rounded-full px-4 py-2 text-[13px] font-semibold transition-all flex items-center justify-center bg-[#f5f7f9] text-[#1E2B3A] no-underline active:scale-95 scale-100 duration-75"
                       style={{
                         boxShadow: "0 1px 1px #0c192714, 0 1px 3px #0c192724",
@@ -915,6 +1088,7 @@ export default function DemoPage() {
                     <div>
                       <button
                         onClick={() => {
+                          log.action("Chuyển bước", { từ: step, sang: 2 });
                           setStep(2);
                         }}
                         className="group rounded-full px-4 py-2 text-[13px] font-semibold transition-all flex items-center justify-center bg-[#1E2B3A] text-white hover:[linear-gradient(0deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.1)), #0D2247] no-underline flex gap-x-2  active:scale-95 scale-100 duration-75"
@@ -971,7 +1145,12 @@ export default function DemoPage() {
                   <div>
                     <RadioGroup
                       value={selectedInterviewer}
-                      onChange={setSelectedInterviewer}
+                      onChange={(interviewer) => {
+                        log.action("Chọn người phỏng vấn", {
+                          interviewer: interviewer.name,
+                        });
+                        setSelectedInterviewer(interviewer);
+                      }}
                     >
                       <RadioGroup.Label className="sr-only">
                         Server size
@@ -1013,188 +1192,6 @@ export default function DemoPage() {
                                     </RadioGroup.Description>
                                   </span>
                                 </span>
-                                <RadioGroup.Description
-                                  as="span"
-                                  className="flex text-sm ml-4 mt-0 flex-col text-right items-center justify-center"
-                                >
-                                  <span className=" text-gray-500">
-                                    <svg
-                                      className="w-[28px] h-full"
-                                      viewBox="0 0 38 30"
-                                      fill="none"
-                                      xmlns="http://www.w3.org/2000/svg"
-                                    >
-                                      <g filter="url(#filter0_d_34_25)">
-                                        <g clipPath="url(#clip0_34_25)">
-                                          <mask
-                                            id="mask0_34_25"
-                                            style={{ maskType: "luminance" }}
-                                            maskUnits="userSpaceOnUse"
-                                            x="3"
-                                            y="1"
-                                            width="32"
-                                            height="24"
-                                          >
-                                            <rect
-                                              x="3"
-                                              y="1"
-                                              width="32"
-                                              height="24"
-                                              fill="white"
-                                            />
-                                          </mask>
-                                          <g mask="url(#mask0_34_25)">
-                                            <path
-                                              fillRule="evenodd"
-                                              clipRule="evenodd"
-                                              d="M3 1H35V25H3V1Z"
-                                              fill="#F7FCFF"
-                                            />
-                                            <path
-                                              fillRule="evenodd"
-                                              clipRule="evenodd"
-                                              d="M3 15.6666V17.6666H35V15.6666H3Z"
-                                              fill="#E31D1C"
-                                            />
-                                            <path
-                                              fillRule="evenodd"
-                                              clipRule="evenodd"
-                                              d="M3 19.3334V21.3334H35V19.3334H3Z"
-                                              fill="#E31D1C"
-                                            />
-                                            <path
-                                              fillRule="evenodd"
-                                              clipRule="evenodd"
-                                              d="M3 8.33337V10.3334H35V8.33337H3Z"
-                                              fill="#E31D1C"
-                                            />
-                                            <path
-                                              fillRule="evenodd"
-                                              clipRule="evenodd"
-                                              d="M3 23V25H35V23H3Z"
-                                              fill="#E31D1C"
-                                            />
-                                            <path
-                                              fillRule="evenodd"
-                                              clipRule="evenodd"
-                                              d="M3 12V14H35V12H3Z"
-                                              fill="#E31D1C"
-                                            />
-                                            <path
-                                              fillRule="evenodd"
-                                              clipRule="evenodd"
-                                              d="M3 1V3H35V1H3Z"
-                                              fill="#E31D1C"
-                                            />
-                                            <path
-                                              fillRule="evenodd"
-                                              clipRule="evenodd"
-                                              d="M3 4.66663V6.66663H35V4.66663H3Z"
-                                              fill="#E31D1C"
-                                            />
-                                            <rect
-                                              x="3"
-                                              y="1"
-                                              width="20"
-                                              height="13"
-                                              fill="#2E42A5"
-                                            />
-                                            <path
-                                              fillRule="evenodd"
-                                              clipRule="evenodd"
-                                              d="M4.72221 3.93871L3.99633 4.44759L4.2414 3.54198L3.59668 2.96807H4.43877L4.7212 2.229L5.05237 2.96807H5.77022L5.20619 3.54198L5.42455 4.44759L4.72221 3.93871ZM8.72221 3.93871L7.99633 4.44759L8.2414 3.54198L7.59668 2.96807H8.43877L8.7212 2.229L9.05237 2.96807H9.77022L9.20619 3.54198L9.42455 4.44759L8.72221 3.93871ZM11.9963 4.44759L12.7222 3.93871L13.4245 4.44759L13.2062 3.54198L13.7702 2.96807H13.0524L12.7212 2.229L12.4388 2.96807H11.5967L12.2414 3.54198L11.9963 4.44759ZM16.7222 3.93871L15.9963 4.44759L16.2414 3.54198L15.5967 2.96807H16.4388L16.7212 2.229L17.0524 2.96807H17.7702L17.2062 3.54198L17.4245 4.44759L16.7222 3.93871ZM3.99633 8.44759L4.72221 7.93871L5.42455 8.44759L5.20619 7.54198L5.77022 6.96807H5.05237L4.7212 6.229L4.43877 6.96807H3.59668L4.2414 7.54198L3.99633 8.44759ZM8.72221 7.93871L7.99633 8.44759L8.2414 7.54198L7.59668 6.96807H8.43877L8.7212 6.229L9.05237 6.96807H9.77022L9.20619 7.54198L9.42455 8.44759L8.72221 7.93871ZM11.9963 8.44759L12.7222 7.93871L13.4245 8.44759L13.2062 7.54198L13.7702 6.96807H13.0524L12.7212 6.229L12.4388 6.96807H11.5967L12.2414 7.54198L11.9963 8.44759ZM16.7222 7.93871L15.9963 8.44759L16.2414 7.54198L15.5967 6.96807H16.4388L16.7212 6.229L17.0524 6.96807H17.7702L17.2062 7.54198L17.4245 8.44759L16.7222 7.93871ZM3.99633 12.4476L4.72221 11.9387L5.42455 12.4476L5.20619 11.542L5.77022 10.9681H5.05237L4.7212 10.229L4.43877 10.9681H3.59668L4.2414 11.542L3.99633 12.4476ZM8.72221 11.9387L7.99633 12.4476L8.2414 11.542L7.59668 10.9681H8.43877L8.7212 10.229L9.05237 10.9681H9.77022L9.20619 11.542L9.42455 12.4476L8.72221 11.9387ZM11.9963 12.4476L12.7222 11.9387L13.4245 12.4476L13.2062 11.542L13.7702 10.9681H13.0524L12.7212 10.229L12.4388 10.9681H11.5967L12.2414 11.542L11.9963 12.4476ZM16.7222 11.9387L15.9963 12.4476L16.2414 11.542L15.5967 10.9681H16.4388L16.7212 10.229L17.0524 10.9681H17.7702L17.2062 11.542L17.4245 12.4476L16.7222 11.9387ZM19.9963 4.44759L20.7222 3.93871L21.4245 4.44759L21.2062 3.54198L21.7702 2.96807H21.0524L20.7212 2.229L20.4388 2.96807H19.5967L20.2414 3.54198L19.9963 4.44759ZM20.7222 7.93871L19.9963 8.44759L20.2414 7.54198L19.5967 6.96807H20.4388L20.7212 6.229L21.0524 6.96807H21.7702L21.2062 7.54198L21.4245 8.44759L20.7222 7.93871ZM19.9963 12.4476L20.7222 11.9387L21.4245 12.4476L21.2062 11.542L21.7702 10.9681H21.0524L20.7212 10.229L20.4388 10.9681H19.5967L20.2414 11.542L19.9963 12.4476ZM6.72221 5.93871L5.99633 6.44759L6.2414 5.54198L5.59668 4.96807H6.43877L6.7212 4.229L7.05237 4.96807H7.77022L7.20619 5.54198L7.42455 6.44759L6.72221 5.93871ZM9.99633 6.44759L10.7222 5.93871L11.4245 6.44759L11.2062 5.54198L11.7702 4.96807H11.0524L10.7212 4.229L10.4388 4.96807H9.59668L10.2414 5.54198L9.99633 6.44759ZM14.7222 5.93871L13.9963 6.44759L14.2414 5.54198L13.5967 4.96807H14.4388L14.7212 4.229L15.0524 4.96807H15.7702L15.2062 5.54198L15.4245 6.44759L14.7222 5.93871ZM5.99633 10.4476L6.72221 9.93871L7.42455 10.4476L7.20619 9.54198L7.77022 8.96807H7.05237L6.7212 8.229L6.43877 8.96807H5.59668L6.2414 9.54198L5.99633 10.4476ZM10.7222 9.93871L9.99633 10.4476L10.2414 9.54198L9.59668 8.96807H10.4388L10.7212 8.229L11.0524 8.96807H11.7702L11.2062 9.54198L11.4245 10.4476L10.7222 9.93871ZM13.9963 10.4476L14.7222 9.93871L15.4245 10.4476L15.2062 9.54198L15.7702 8.96807H15.0524L14.7212 8.229L14.4388 8.96807H13.5967L14.2414 9.54198L13.9963 10.4476ZM18.7222 5.93871L17.9963 6.44759L18.2414 5.54198L17.5967 4.96807H18.4388L18.7212 4.229L19.0524 4.96807H19.7702L19.2062 5.54198L19.4245 6.44759L18.7222 5.93871ZM17.9963 10.4476L18.7222 9.93871L19.4245 10.4476L19.2062 9.54198L19.7702 8.96807H19.0524L18.7212 8.229L18.4388 8.96807H17.5967L18.2414 9.54198L17.9963 10.4476Z"
-                                              fill="#F7FCFF"
-                                            />
-                                          </g>
-                                          <rect
-                                            x="3"
-                                            y="1"
-                                            width="32"
-                                            height="24"
-                                            fill="url(#paint0_linear_34_25)"
-                                            style={{ mixBlendMode: "overlay" }}
-                                          />
-                                        </g>
-                                        <rect
-                                          x="3.5"
-                                          y="1.5"
-                                          width="31"
-                                          height="23"
-                                          rx="1.5"
-                                          stroke="black"
-                                          strokeOpacity="0.1"
-                                          style={{ mixBlendMode: "multiply" }}
-                                        />
-                                      </g>
-                                      <defs>
-                                        <filter
-                                          id="filter0_d_34_25"
-                                          x="0"
-                                          y="0"
-                                          width="38"
-                                          height="30"
-                                          filterUnits="userSpaceOnUse"
-                                          colorInterpolationFilters="sRGB"
-                                        >
-                                          <feFlood
-                                            floodOpacity="0"
-                                            result="BackgroundImageFix"
-                                          />
-                                          <feColorMatrix
-                                            in="SourceAlpha"
-                                            type="matrix"
-                                            values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0"
-                                            result="hardAlpha"
-                                          />
-                                          <feOffset dy="2" />
-                                          <feGaussianBlur stdDeviation="1.5" />
-                                          <feColorMatrix
-                                            type="matrix"
-                                            values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.1 0"
-                                          />
-                                          <feBlend
-                                            mode="normal"
-                                            in2="BackgroundImageFix"
-                                            result="effect1_dropShadow_34_25"
-                                          />
-                                          <feBlend
-                                            mode="normal"
-                                            in="SourceGraphic"
-                                            in2="effect1_dropShadow_34_25"
-                                            result="shape"
-                                          />
-                                        </filter>
-                                        <linearGradient
-                                          id="paint0_linear_34_25"
-                                          x1="19"
-                                          y1="1"
-                                          x2="19"
-                                          y2="25"
-                                          gradientUnits="userSpaceOnUse"
-                                        >
-                                          <stop
-                                            stopColor="white"
-                                            stopOpacity="0.7"
-                                          />
-                                          <stop offset="1" stopOpacity="0.3" />
-                                        </linearGradient>
-                                        <clipPath id="clip0_34_25">
-                                          <rect
-                                            x="3"
-                                            y="1"
-                                            width="32"
-                                            height="24"
-                                            rx="2"
-                                            fill="white"
-                                          />
-                                        </clipPath>
-                                      </defs>
-                                    </svg>
-                                  </span>
-                                  <span className="font-medium text-gray-900">
-                                    EN
-                                  </span>
-                                </RadioGroup.Description>
                                 <span
                                   className={classNames(
                                     active ? "border" : "border-2",
@@ -1211,11 +1208,21 @@ export default function DemoPage() {
                         ))}
                       </div>
                     </RadioGroup>
+                    {/* Hidden, invisible shortcut directly below Sarah's card. */}
+                    <button
+                      aria-hidden="true"
+                      tabIndex={-1}
+                      onClick={enterSecretMode}
+                      className="opacity-0 cursor-pointer w-full h-5 block border-0 bg-transparent p-0 focus:outline-none"
+                    />
                   </div>
                   <div className="flex gap-[15px] justify-end mt-8">
                     <div>
                       <button
-                        onClick={() => setStep(1)}
+                        onClick={() => {
+                          log.action("Chuyển bước", { từ: step, sang: 1 });
+                          setStep(1);
+                        }}
                         className="group rounded-full px-4 py-2 text-[13px] font-semibold transition-all flex items-center justify-center bg-[#f5f7f9] text-[#1E2B3A] no-underline active:scale-95 scale-100 duration-75"
                         style={{
                           boxShadow: "0 1px 1px #0c192714, 0 1px 3px #0c192724",
@@ -1227,6 +1234,7 @@ export default function DemoPage() {
                     <div>
                       <button
                         onClick={() => {
+                          log.action("Chuyển bước", { từ: step, sang: 3 });
                           setStep(3);
                         }}
                         className="group rounded-full px-4 py-2 text-[13px] font-semibold transition-all flex items-center justify-center bg-[#1E2B3A] text-white hover:[linear-gradient(0deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.1)), #0D2247] no-underline flex gap-x-2  active:scale-95 scale-100 duration-75"

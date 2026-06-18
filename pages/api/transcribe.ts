@@ -1,6 +1,7 @@
 import OpenAI from "openai";
 import { IncomingForm } from "formidable";
-const fs = require("fs");
+import os from "os";
+import fs from "fs";
 
 export const config = {
   api: {
@@ -9,6 +10,10 @@ export const config = {
 };
 
 export default async function handler(req: any, res: any) {
+  let uploadedFilePath: string | undefined;
+
+  console.log("[API transcribe] Nhận request");
+
   try {
     if (!process.env.SHOPAIKEY_API_KEY) {
       res.status(500).json({ error: "API key chưa được cấu hình trên server." });
@@ -24,7 +29,10 @@ export default async function handler(req: any, res: any) {
       (resolve, reject) => {
         const form = new IncomingForm({
           multiples: false,
-          uploadDir: "/tmp",
+          // Use the OS temp directory so this works on every platform.
+          // A hardcoded "/tmp" resolves to a non-existent path on Windows
+          // and was the cause of the 500 errors.
+          uploadDir: os.tmpdir(),
           keepExtensions: true,
         });
         form.parse(req, (err, fields, files) => {
@@ -34,22 +42,44 @@ export default async function handler(req: any, res: any) {
       }
     );
 
-    const videoFile = fData.files.file;
-    const videoFilePath = videoFile?.filepath;
+    // formidable can return either a single file or an array depending on
+    // version/config — normalize to a single file object.
+    const rawFile = fData.files.file;
+    const videoFile = Array.isArray(rawFile) ? rawFile[0] : rawFile;
+    uploadedFilePath = videoFile?.filepath;
 
+    const question = Array.isArray(req.query.question)
+      ? req.query.question[0]
+      : req.query.question;
+    console.log("[API transcribe] Question:", question?.substring(0, 80));
+    console.log("[API transcribe] Audio size:", videoFile?.size, "bytes");
+
+    if (!uploadedFilePath) {
+      res.status(400).json({ error: "Không tìm thấy tệp âm thanh trong yêu cầu." });
+      return;
+    }
+
+    console.log("[API transcribe] Gọi OpenAI Whisper...");
     const resp = await openai.audio.transcriptions.create({
-      file: fs.createReadStream(videoFilePath),
+      file: fs.createReadStream(uploadedFilePath),
       model: "whisper-1",
+      language: "vi",
+      prompt:
+        "Đây là câu trả lời phỏng vấn xin việc bằng tiếng Việt về công nghệ thông tin.",
     });
 
-    const transcript = resp?.text;
-
-    res.status(200).json({ transcript });
-    return resp;
+    console.log("[API transcribe] Whisper trả về:", resp?.text?.substring(0, 100));
+    res.status(200).json({ transcript: resp?.text ?? "" });
   } catch (error) {
+    console.error("[API transcribe] LỖI:", error);
     console.error("TRANSCRIBE ERROR:", error);
-    return res.status(500).json({
+    res.status(500).json({
       error: error instanceof Error ? error.message : String(error),
     });
+  } finally {
+    // Clean up the temporary upload — the audio is never persisted.
+    if (uploadedFilePath) {
+      fs.promises.unlink(uploadedFilePath).catch(() => {});
+    }
   }
 }
