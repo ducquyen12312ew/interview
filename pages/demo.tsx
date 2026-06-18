@@ -2,6 +2,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { RadioGroup } from "@headlessui/react";
 import { v4 as uuid } from "uuid";
 import Link from "next/link";
+import Image from "next/image";
 import { useRef, useState, useEffect, useCallback } from "react";
 import Webcam from "react-webcam";
 import { createFFmpeg, fetchFile } from "@ffmpeg/ffmpeg";
@@ -43,12 +44,104 @@ const interviewers = [
   },
 ];
 
-// The single interview question used across the demo.
-const QUESTION_TEXT =
-  "Hãy kể về một lần dự án IT của bạn gặp lỗi nghiêm trọng (bug/sự cố) ngay sát giờ ra mắt (release). Bạn đã xử lý thế nào?";
 // Pre-loaded transcript for the hidden Sarah demo mode.
 const DEMO_TRANSCRIPT =
   "Dạ... có một lần... hình như là lúc làm bài tập lớn... à không, lúc em làm deploy cái dự án web cuối kỳ ấy ạ. Chỉ còn khoảng... ờ... 2 tiếng nữa là đến giờ demo với thầy thì tự nhiên cái API nó... kiểu... bị crash liên tục, không fetch được dữ liệu từ database lên. Lúc đó em... em hoảng lắm, tại code chạy trên máy em (localhost) ngon lành mà lên server nó lại lỗi. Xong rồi... em mới... à... nhảy vào đọc log của server thì thấy lỗi kết nối. Thì ra là... kiểu... lúc config biến môi trường trên server em bị gõ sai mất một ký tự. Thế là... ờ... em sửa lại rồi deploy lại luôn. May quá... dạ... hệ thống chạy lại bình thường ngay trước giờ demo tầm 15 phút ạ.";
+
+type InterviewerName = (typeof interviewers)[number]["name"];
+
+type InterviewVariant = {
+  interviewer: InterviewerName;
+  version: string;
+  weight: number;
+  video: string;
+  question: string;
+};
+
+const defaultQuestion =
+  "Hãy kể về một lần dự án IT của bạn gặp lỗi nghiêm trọng (bug/sự cố) ngay sát giờ ra mắt (release). Bạn đã xử lý thế nào?";
+
+const interviewerVariants: Record<InterviewerName, InterviewVariant[]> = {
+  John: [
+    {
+      interviewer: "John",
+      version: "v1",
+      weight: 20,
+      video: "/video/John_v1.mp4",
+      question: defaultQuestion,
+    },
+    {
+      interviewer: "John",
+      version: "v2",
+      weight: 55,
+      video: "/video/John_v2.mp4",
+      question:
+        "Nếu được giao một công nghệ hoàn toàn mới mà bạn chưa từng học, bạn sẽ tiếp cận như thế nào?",
+    },
+    {
+      interviewer: "John",
+      version: "v3",
+      weight: 25,
+      video: "/video/John_v3.mp4",
+      question:
+        "Bạn đã từng tối ưu hiệu năng hệ thống hoặc ứng dụng trong dự án nào chưa? Hãy chia sẻ cách bạn thực hiện.",
+    },
+  ],
+  Richard: [
+    {
+      interviewer: "Richard",
+      version: "v1",
+      weight: 30,
+      video: "/video/Richard_v1.mp4",
+      question: defaultQuestion,
+    },
+    {
+      interviewer: "Richard",
+      version: "v2",
+      weight: 40,
+      video: "/video/Richard_v2.mp4",
+      question:
+        "Nếu database bị mất kết nối, hệ thống của bạn sẽ xử lý như thế nào?",
+    },
+    {
+      interviewer: "Richard",
+      version: "v3",
+      weight: 30,
+      video: "/video/Richard_v3.mp4",
+      question:
+        "Nếu được giao một công nghệ hoàn toàn mới mà bạn chưa từng học, bạn sẽ tiếp cận như thế nào?",
+    },
+  ],
+  Sarah: [
+    {
+      interviewer: "Sarah",
+      version: "v1",
+      weight: 100,
+      video: "/video/Sarah_v1.mp4",
+      question: defaultQuestion,
+    },
+  ],
+};
+
+const secretDemoVariant = interviewerVariants.Sarah[0];
+
+function getWeightedRandomVariant(
+  interviewer: InterviewerName
+): InterviewVariant {
+  const variants = interviewerVariants[interviewer];
+  const totalWeight = variants.reduce((sum, variant) => sum + variant.weight, 0);
+  const random = Math.random() * totalWeight;
+
+  let cumulativeWeight = 0;
+  for (const variant of variants) {
+    cumulativeWeight += variant.weight;
+    if (random < cumulativeWeight) {
+      return variant;
+    }
+  }
+
+  return variants[variants.length - 1];
+}
 
 const ffmpeg = createFFmpeg({
   // corePath: `http://localhost:3000/ffmpeg/dist/ffmpeg-core.js`,
@@ -136,6 +229,8 @@ export default function DemoPage() {
   const [selectedInterviewer, setSelectedInterviewer] = useState(
     interviewers[0]
   );
+  const [selectedVariant, setSelectedVariant] =
+    useState<InterviewVariant | null>(null);
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(true);
   const webcamRef = useRef<Webcam | null>(null);
@@ -157,15 +252,9 @@ export default function DemoPage() {
   const [isSecretMode, setIsSecretMode] = useState(false);
   const secretAnalysisStarted = useRef(false);
   const vidRef = useRef<HTMLVideoElement>(null);
-
-  // The interviewer's video clip (with embedded audio).
-  const getVideoSrc = (interviewerId: string): string => {
-    return `/video/${interviewerId}_v1.mp4`;
-  };
-
-  // Single source of truth for the question so the text shown on screen
-  // always matches the text sent to the AI.
-  const getQuestion = () => QUESTION_TEXT;
+  const activeVariant =
+    selectedVariant ?? interviewerVariants[selectedInterviewer.name][0];
+  const displayedVariant = isSecretMode ? secretDemoVariant : activeVariant;
 
   // Streams the AI feedback for a given question + answer transcript.
   const generateFeedback = async (
@@ -231,10 +320,12 @@ export default function DemoPage() {
     log.action("Chuyển bước", { từ: step, sang: 3 });
     setStep(3);
 
-    generateFeedback(QUESTION_TEXT, DEMO_TRANSCRIPT, true).catch((error) => {
+    generateFeedback(secretDemoVariant.question, DEMO_TRANSCRIPT, true).catch(
+      (error) => {
       log.error("Secret-mode analysis", error);
       console.error("Secret-mode analysis failed:", error);
-    });
+      }
+    );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isSecretMode]);
 
@@ -245,6 +336,27 @@ export default function DemoPage() {
   useEffect(() => {
     setIsDesktop(window.innerWidth >= 768);
   }, []);
+
+  const handleStartCaptureClick = useCallback(() => {
+    const startTimer = document.getElementById("startTimer");
+    if (startTimer) {
+      startTimer.style.display = "none";
+    }
+
+    // Play the local interviewer video (with its own embedded audio). The
+    // video's onEnded still drives the flow (setVideoEnded).
+    if (vidRef.current) {
+      vidRef.current.play();
+    }
+  }, []);
+
+  const handleStopCaptureClick = useCallback(() => {
+    if (mediaRecorderRef.current) {
+      log.action("Dừng ghi âm", { chunks: recordedChunks.length });
+      mediaRecorderRef.current.stop();
+    }
+    setCapturing(false);
+  }, [recordedChunks.length]);
 
   useEffect(() => {
     if (videoEnded) {
@@ -261,60 +373,34 @@ export default function DemoPage() {
       mediaRecorderRef.current = new MediaRecorder(
         webcamRef?.current?.stream as MediaStream
       );
-      mediaRecorderRef.current.addEventListener(
-        "dataavailable",
-        handleDataAvailable
-      );
+      mediaRecorderRef.current.addEventListener("dataavailable", ({ data }) => {
+        if (data.size > 0) {
+          setRecordedChunks((prev) => prev.concat(data));
+        }
+      });
       mediaRecorderRef.current.start();
     }
-  }, [videoEnded, webcamRef, setCapturing, mediaRecorderRef]);
-
-  const handleStartCaptureClick = useCallback(() => {
-    const startTimer = document.getElementById("startTimer");
-    if (startTimer) {
-      startTimer.style.display = "none";
-    }
-
-    // Play the local interviewer video (with its own embedded audio). The
-    // video's onEnded still drives the flow (setVideoEnded).
-    if (vidRef.current) {
-      vidRef.current.play();
-    }
-  }, [webcamRef, setCapturing, mediaRecorderRef]);
-
-  const handleDataAvailable = useCallback(
-    ({ data }: BlobEvent) => {
-      if (data.size > 0) {
-        setRecordedChunks((prev) => prev.concat(data));
-      }
-    },
-    [setRecordedChunks]
-  );
-
-  const handleStopCaptureClick = useCallback(() => {
-    if (mediaRecorderRef.current) {
-      log.action("Dừng ghi âm", { chunks: recordedChunks.length });
-      mediaRecorderRef.current.stop();
-    }
-    setCapturing(false);
-  }, [mediaRecorderRef, webcamRef, setCapturing]);
+  }, [videoEnded]);
 
   useEffect(() => {
     let timer: any = null;
     if (capturing) {
       timer = setInterval(() => {
-        setSeconds((seconds) => seconds - 1);
+        setSeconds((currentSeconds) => {
+          if (currentSeconds <= 1) {
+            handleStopCaptureClick();
+            setCapturing(false);
+            return 0;
+          }
+
+          return currentSeconds - 1;
+        });
       }, 1000);
-      if (seconds === 0) {
-        handleStopCaptureClick();
-        setCapturing(false);
-        setSeconds(0);
-      }
     }
     return () => {
       clearInterval(timer);
     };
-  });
+  }, [capturing, handleStopCaptureClick]);
 
   const handleDownload = async () => {
     if (recordedChunks.length) {
@@ -354,7 +440,7 @@ export default function DemoPage() {
       // This reads the converted file from the file system
       const fileData = ffmpeg.FS("readFile", `${unique_id}.mp3`);
       // This creates a new file from the raw data
-      const output = new File([fileData.buffer], `${unique_id}.mp3`, {
+      const output = new File([fileData.buffer as ArrayBuffer], `${unique_id}.mp3`, {
         type: "audio/mp3",
       });
 
@@ -362,7 +448,7 @@ export default function DemoPage() {
       formData.append("file", output, `${unique_id}.mp3`);
       formData.append("model", "whisper-1");
 
-      const question = getQuestion();
+      const question = activeVariant.question;
 
       setStatus("Đang nhận dạng giọng nói");
 
@@ -464,9 +550,11 @@ export default function DemoPage() {
                   transition={{ duration: 0.35, ease: [0.075, 0.82, 0.165, 1] }}
                   className="relative w-full max-w-[1080px] overflow-hidden bg-[#1D2B3A] rounded-lg ring-1 ring-gray-900/5 shadow-md flex flex-col md:flex-row items-center gap-5 p-6"
                 >
-                  <img
+                  <Image
                     src="/placeholders/Sarah.webp"
                     alt="Sarah's Interviewer Profile"
+                    width={120}
+                    height={120}
                     className="w-[120px] h-[120px] rounded-lg object-cover ring-1 ring-white/10 shrink-0"
                   />
                   <div className="flex flex-col text-center md:text-left">
@@ -474,7 +562,7 @@ export default function DemoPage() {
                       Người phỏng vấn · Sarah
                     </span>
                     <h2 className="text-white text-lg md:text-xl font-semibold mt-1">
-                      {getQuestion()}
+                      {displayedVariant.question}
                     </h2>
                   </div>
                 </motion.div>
@@ -592,7 +680,7 @@ export default function DemoPage() {
               {recordingPermission ? (
                 <div className="w-full flex flex-col max-w-[1080px] mx-auto justify-center">
                   <h2 className="text-2xl font-semibold text-left text-[#1D2B3A] mb-2">
-                    {QUESTION_TEXT}
+                    {activeVariant.question}
                   </h2>
                   <span className="text-[14px] leading-[20px] text-[#1a2b3b] font-normal mb-4">
                     Câu hỏi thường gặp tại Google, Facebook và nhiều công ty hàng đầu
@@ -641,7 +729,7 @@ export default function DemoPage() {
                           <div className="h-full w-full aspect-video rounded md:rounded-lg lg:rounded-xl">
                             <video
                               id="question-video"
-                              key={getVideoSrc(selectedInterviewer.id)}
+                              key={activeVariant.video}
                               onEnded={() => {
                                 log.action(
                                   "Video phỏng vấn kết thúc, bắt đầu đếm ngược"
@@ -655,7 +743,7 @@ export default function DemoPage() {
                               crossOrigin="anonymous"
                             >
                               <source
-                                src={getVideoSrc(selectedInterviewer.id)}
+                                src={activeVariant.video}
                                 type="video/mp4"
                               />
                             </video>
@@ -1235,6 +1323,9 @@ export default function DemoPage() {
                       <button
                         onClick={() => {
                           log.action("Chuyển bước", { từ: step, sang: 3 });
+                          setSelectedVariant(
+                            getWeightedRandomVariant(selectedInterviewer.name)
+                          );
                           setStep(3);
                         }}
                         className="group rounded-full px-4 py-2 text-[13px] font-semibold transition-all flex items-center justify-center bg-[#1E2B3A] text-white hover:[linear-gradient(0deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.1)), #0D2247] no-underline flex gap-x-2  active:scale-95 scale-100 duration-75"
