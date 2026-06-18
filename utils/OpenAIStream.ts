@@ -27,8 +27,6 @@ export async function OpenAIStream(payload: OpenAIStreamPayload) {
   const encoder = new TextEncoder();
   const decoder = new TextDecoder();
 
-  let counter = 0;
-
   const baseUrl = process.env.SHOPAIKEY_OPENAI_BASE_URL ?? "https://api.shopaikey.com/v1";
   const apiKey = process.env.SHOPAIKEY_API_KEY ?? "";
 
@@ -52,13 +50,11 @@ export async function OpenAIStream(payload: OpenAIStreamPayload) {
           }
           try {
             const json = JSON.parse(data);
-            const text = json.choices[0].delta?.content || "";
-            if (counter < 2 && (text.match(/\n/) || []).length) {
-              return;
-            }
+            const text =
+              json.choices[0]?.delta?.content ?? json.choices[0]?.text ?? "";
+            if (!text) return;
             const queue = encoder.encode(text);
             controller.enqueue(queue);
-            counter++;
           } catch (e) {
             controller.error(e);
           }
